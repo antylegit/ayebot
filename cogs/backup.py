@@ -43,10 +43,11 @@ class AyeBotBackup(discord.Client):
         - Message Timestamp
         - Message Content
         - Attached CDN files
-
-        Data to be fetched hopefully soon:
         - Reactions
         - Edited boolean
+
+        Data to be fetched hopefully soon:
+        - Deleted boolean
         """
 
         base_backup_folder = os.path.join(os.getcwd(), "backup")
@@ -86,7 +87,7 @@ class AyeBotBackup(discord.Client):
 
                 # ONLY BACK UP CHANNELS THE BOT CAN READ
                 if not channel.permissions_for(guild.me).read_message_history:
-                    print(f"    🟡 Skipping {channel.name} ({channel.id}) – no Read Message History permission.")
+                    print(f"    🟡 Warning: Skipping {channel.name} ({channel.id}) – no Read Message History permission.")
                     continue
 
                 # CREATE CHANNEL FOLDER AND ATTACHMENTS SUBFOLDER
@@ -136,7 +137,7 @@ class AyeBotBackup(discord.Client):
                                 await attachment.save(local_path)
                                 print(f"        🟢 Saved attachment {attachment.filename} → {local_path}.")
                             except Exception as e:
-                                print(f"        🟡 Failed to download {attachment.url}: {e}.")
+                                print(f"        🟡 Warning: Failed to download {attachment.url}: {e}.")
                                 local_path = None
 
                             attachments_info.append({
@@ -145,6 +146,37 @@ class AyeBotBackup(discord.Client):
                                 "url": attachment.url, # ORIGINAL CDN LINK
                                 "local_path": local_path, # LOCAL FILE LINK
                             })
+
+                        # BUILD A LIST OF REACTIONS AND WHO REACTED
+                        reactions_info = []
+
+                        for reaction in msg.reactions:
+                            try:
+                                # reaction.users() RETURNS AN AsyncIterator OF ALL USERS WHO CLICKED THIS REACTION
+                                users_list = [user async for user in reaction.users(limit=None)]
+                            except Exception as e:
+                                # IN CASE OF A PERMISSION/RATE-LIMIT ERROR, RECORD AN EMPTY LIST
+                                print(f"        🟡 Warning: Could not fetch users for reaction {reaction.emoji} on message {msg.id}: {e}")
+                                users_list = []
+
+                            # TURN EACH USER INTO A SMALL DICT
+                            reactors = [
+                                {
+                                    "id": user.id,
+                                    "name": user.name,
+                                    "discriminator": user.discriminator
+                                }
+                                for user in users_list
+                            ]
+
+                            reactions_info.append({
+                                "emoji": str(reaction.emoji),
+                                "count": reaction.count,
+                                "users": reactors
+                            })
+
+                        # DETERMINE IF MESSAGE WAS EVER EDITED
+                        edited_flag = msg.edited_at is not None
 
                         # BUILD JSON-SERIALIZABLE MESSAGE DICT
                         message_data = {
@@ -156,7 +188,9 @@ class AyeBotBackup(discord.Client):
                             },
                             "timestamp": msg.created_at.isoformat(),
                             "content": msg.content,
-                            "attachments": attachments_info
+                            "attachments": attachments_info,
+                            "edited": edited_flag,
+                            "reactions": reactions_info
                         }
 
                         # WRITE IT AS ONE JSON-ENCODED LINE
@@ -181,7 +215,6 @@ class AyeBotBackup(discord.Client):
                 json.dump(to_dump, f, indent=2)
 
             print(f"    🟢 Updated timestamps → {info_file_path}.")
-
             print(f"🟢 Finished backing up guild: {guild.name} ({guild.id}).")
 
         print("🟢 Backup complete for all guilds.")
